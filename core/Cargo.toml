@@ -30,6 +30,7 @@ format = ["dep:topiary-core", "dep:topiary-queries", "dep:tree-sitter-nickel"]
 metrics = ["dep:metrics"]
 nix-experimental = [ "dep:cxx", "dep:cxx-build", "dep:pkg-config", "nickel-lang-parser/nix-experimental" ]
 incremental-experimental = []
+cap-std = ["dep:cap-std"]
 benchmark-ci = []
 
 [build-dependencies]
@@ -92,6 +93,7 @@ tree-sitter-nickel = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 strsim.workspace = true
 bumpalo.workspace = true
+cap-std = { workspace = true, optional = true }
 
 [dev-dependencies]
 pretty_assertions.workspace = true
@@ -100,6 +102,7 @@ criterion.workspace = true
 nickel-lang-utils = { workspace = true, features = ["pprof"] }
 similar.workspace = true
 test-generator.workspace = true
+tempfile.workspace = true
 
 # Enable this to use flamegraphs
 # [profile.release]

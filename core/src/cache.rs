@@ -250,6 +250,8 @@ pub struct SourceCache {
     pub packages: HashMap<FileId, PathBuf>,
     /// The map used to resolve package imports.
     pub package_map: Option<PackageMap>,
+    /// Where files are read from.
+    fs: SourceFs,
 }
 
 impl SourceCache {
@@ -263,6 +265,7 @@ impl SourceCache {
             import_paths: Vec::new(),
             packages: HashMap::new(),
             package_map: None,
+            fs: SourceFs::default(),
         }
     }
 
@@ -284,6 +287,17 @@ impl SourceCache {
         self.package_map = Some(map);
     }
 
+    /// Reads files only from within `dir`, instead of from the ambient filesystem.
+    ///
+    /// Paths of files added by path and of imports are then resolved relative to `dir` rather
+    /// than to the current directory, and can't escape it: absolute paths, `..` components going
+    /// above `dir` and symlinks pointing outside of it are refused by `cap-std`. The same goes for
+    /// the import path list and package paths, which should thus be relative to `dir` as well.
+    #[cfg(feature = "cap-std")]
+    pub fn set_root_dir(&mut self, dir: cap_std::fs::Dir) {
+        self.fs = SourceFs::Dir(Arc::new(dir));
+    }
+
     /// Same as [Self::add_file], but assumes that the path is already normalized and takes the
     /// timestamp as a parameter.
     fn add_normalized_file(
@@ -292,7 +306,7 @@ impl SourceCache {
         format: InputFormat,
         timestamp: SystemTime,
     ) -> io::Result<FileId> {
-        let contents = std::fs::read_to_string(&path)?;
+        let contents = self.fs.read_to_string(&path)?;
         let file_id = self.files.add(&path, contents);
 
         self.file_paths
@@ -317,8 +331,8 @@ impl SourceCache {
         format: InputFormat,
     ) -> io::Result<FileId> {
         let path = path.into();
-        let timestamp = timestamp(&path)?;
-        let normalized = normalize_path(&path)?;
+        let timestamp = self.fs.timestamp(Path::new(&path))?;
+        let normalized = self.fs.normalize_path(path)?;
         self.add_normalized_file(normalized, format, timestamp)
     }
 
@@ -347,7 +361,7 @@ impl SourceCache {
         format: InputFormat,
     ) -> io::Result<CacheOp<FileId>> {
         let path = path.into();
-        let normalized = normalize_path(&path)?;
+        let normalized = self.fs.normalize_path(&path)?;
 
         // Try to fetch a generated source if the path starts with a hardcoded prefix
         let generated_entry = path
@@ -498,12 +512,12 @@ impl SourceCache {
             | Some(NameIdEntry {
                 source: SourceKind::MemoryClosed,
                 ..
-            }) => Ok(SourceState::Stale(timestamp(name)?)),
+            }) => Ok(SourceState::Stale(self.fs.timestamp(name)?)),
             Some(NameIdEntry {
                 id,
                 source: SourceKind::Filesystem(ts),
             }) => {
-                let new_timestamp = timestamp(name)?;
+                let new_timestamp = self.fs.timestamp(name)?;
                 if ts == &new_timestamp {
                     Ok(SourceState::UpToDate(*id))
                 } else {
@@ -2235,6 +2249,47 @@ pub fn normalize_rel_path(path: &Path) -> PathBuf {
 /// Returns the timestamp of a file. Return `None` if an IO error occurred.
 pub fn timestamp(path: impl AsRef<OsStr>) -> io::Result<SystemTime> {
     fs::metadata(path.as_ref())?.modified()
+}
+
+/// The filesystem the [SourceCache] reads files from.
+#[derive(Clone, Default)]
+enum SourceFs {
+    /// The ambient filesystem, relative paths being resolved against the current directory.
+    #[default]
+    Ambient,
+    /// Only the tree under a directory handle, relative to which all paths are resolved.
+    #[cfg(feature = "cap-std")]
+    Dir(Arc<cap_std::fs::Dir>),
+}
+
+impl SourceFs {
+    /// Normalizes a path for unique identification in the cache, see [normalize_path].
+    ///
+    /// Within a directory handle, paths stay relative to it and are only normalized lexically.
+    /// Absolute paths and leading `..` components are kept as is, so that opening them fails.
+    fn normalize_path(&self, path: impl Into<PathBuf>) -> io::Result<PathBuf> {
+        match self {
+            SourceFs::Ambient => normalize_path(path),
+            #[cfg(feature = "cap-std")]
+            SourceFs::Dir(_) => Ok(normalize_rel_path(&path.into())),
+        }
+    }
+
+    fn read_to_string(&self, path: &Path) -> io::Result<String> {
+        match self {
+            SourceFs::Ambient => fs::read_to_string(path),
+            #[cfg(feature = "cap-std")]
+            SourceFs::Dir(dir) => dir.read_to_string(path),
+        }
+    }
+
+    fn timestamp(&self, path: &Path) -> io::Result<SystemTime> {
+        match self {
+            SourceFs::Ambient => timestamp(path),
+            #[cfg(feature = "cap-std")]
+            SourceFs::Dir(dir) => Ok(dir.metadata(path)?.modified()?.into_std()),
+        }
+    }
 }
 
 /// As RFC007 is being rolled out, the typechecker now needs to operate on the new AST. We need a
