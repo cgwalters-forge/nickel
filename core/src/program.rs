@@ -1028,6 +1028,8 @@ pub struct ProgramBuilder<R = NullReporter, W = io::Sink> {
     import_paths: Vec<PathBuf>,
     package_map: Option<PackageMap>,
     extra_env: Vec<(Ident, NickelValue)>,
+    #[cfg(feature = "cap-std")]
+    root_dir: Option<cap_std::fs::Dir>,
     #[cfg(feature = "incremental-experimental")]
     enable_incremental_evaluation: bool,
     trace: W,
@@ -1053,6 +1055,8 @@ impl ProgramBuilder {
             import_paths: Vec::new(),
             package_map: None,
             extra_env: Vec::new(),
+            #[cfg(feature = "cap-std")]
+            root_dir: None,
             #[cfg(feature = "incremental-experimental")]
             enable_incremental_evaluation: false,
             trace: io::sink(),
@@ -1162,6 +1166,14 @@ impl<R, W> ProgramBuilder<R, W> {
         self
     }
 
+    /// Read all files, including inputs added by path and imports, from within `dir` only. See
+    /// [`crate::cache::SourceCache::set_root_dir`].
+    #[cfg(feature = "cap-std")]
+    pub fn with_root_dir(mut self, dir: cap_std::fs::Dir) -> Self {
+        self.root_dir = Some(dir);
+        self
+    }
+
     /// Replace the trace writer (where output from the `trace` builtin goes).
     pub fn with_trace<W2>(self, trace: W2) -> ProgramBuilder<R, W2>
     where
@@ -1176,6 +1188,8 @@ impl<R, W> ProgramBuilder<R, W> {
             import_paths: self.import_paths,
             package_map: self.package_map,
             extra_env: self.extra_env,
+            #[cfg(feature = "cap-std")]
+            root_dir: self.root_dir,
             #[cfg(feature = "incremental-experimental")]
             enable_incremental_evaluation: self.enable_incremental_evaluation,
             trace,
@@ -1197,6 +1211,8 @@ impl<R, W> ProgramBuilder<R, W> {
             import_paths: self.import_paths,
             package_map: self.package_map,
             extra_env: self.extra_env,
+            #[cfg(feature = "cap-std")]
+            root_dir: self.root_dir,
             #[cfg(feature = "incremental-experimental")]
             enable_incremental_evaluation: self.enable_incremental_evaluation,
             trace: self.trace,
@@ -1255,6 +1271,8 @@ where
             import_paths,
             package_map,
             extra_env,
+            #[cfg(feature = "cap-std")]
+            root_dir,
             #[cfg(feature = "incremental-experimental")]
             enable_incremental_evaluation,
             trace,
@@ -1266,6 +1284,10 @@ where
         }
 
         let mut cache = CacheHub::new();
+        #[cfg(feature = "cap-std")]
+        if let Some(dir) = root_dir {
+            cache.sources.set_root_dir(dir);
+        }
 
         let main_id = if inputs.len() == 1 {
             // Single-input fast path: register it directly and use its file id as the main id.
